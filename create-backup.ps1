@@ -24,25 +24,21 @@ param (
     [string]$config
 )
 
-# Load config if --config is provided
 if ($config) {
     if ($PSBoundParameters.Count -gt 1) {
         Write-Host "When using --config, no other arguments are allowed." -ForegroundColor Red
         exit 1
     }
-    
     if (-Not (Test-Path $config)) {
         Write-Host "Config file not found: $config" -ForegroundColor Red
         exit 1
     }
-    
     try {
         $configData = Get-Content -Raw -Path $config | ConvertFrom-Json
     } catch {
         Write-Host "Failed to read or parse the config file: $_" -ForegroundColor Red
         exit 1
     }
-
     $requiredParams = @("ftpServer", "ftpPassword", "ftpUsername")
     foreach ($param in $requiredParams) {
         if (-Not $configData.PSObject.Properties[$param]) {
@@ -50,7 +46,6 @@ if ($config) {
             exit 1
         }
     }
-    
     $ftpServer = $configData.ftpServer
     $ftpPath = $configData.ftpPath
     $ftpUsername = $configData.ftpUsername
@@ -58,9 +53,8 @@ if ($config) {
     $localBackupDirectory = $configData.localBackupDirectory
     $maxBackups = $configData.maxBackups
     $winscpPath = $configData.winscpPath
+    $logFilePath = ".\error.log"
 }
-
-# Validate required parameters
 if (-Not $ftpServer) {
     Write-Host "Parameter -ftpServer is required." -ForegroundColor Red
     exit 1
@@ -74,47 +68,42 @@ if (-Not $ftpUsername) {
     exit 1
 }
 
-# Funktion zur Fehlerbehandlung und Skriptbeendigung
 function Handle-Error {
     param (
         [string]$message
     )
-	Show-Notification -notificationText "backup FAILED!"
-    Write-Host "Fehler: $message" -ForegroundColor Red
+	Show-Notification -notificationText "backup FAILED! See error log."
+    $errorMessage = "ERROR: $message"
+    $errorMessage | Out-File -FilePath $logFilePath -Append
     exit 1
 }
+
 function Show-Notification {
     param (
         [string]$notificationText
     )
-	Write-Host "NOTIFY"
     Add-Type -AssemblyName System.Windows.Forms
-
-    # Create a notification icon in the system tray
+    
     $notifyIcon = New-Object System.Windows.Forms.NotifyIcon
     $notifyIcon.Icon = [System.Drawing.SystemIcons]::Information
-    $notifyIcon.BalloonTipTitle = "World backup"
+    $notifyIcon.BalloonTipTitle = "FTP-Backup"
     $notifyIcon.BalloonTipText = $notificationText
     $notifyIcon.Visible = $true
 
-    # Show the notification
     $notifyIcon.ShowBalloonTip(10000)
-
-    # Wait for a while to ensure the notification is visible
     Start-Sleep -Seconds 10
-
-    # Dispose the notification icon
     $notifyIcon.Dispose()
 }
 
+#
+# Do actual backup...
+#
 
 Show-Notification -notificationText "backup has been started..."
-# Erstellen des Backup-Verzeichnisses, falls es nicht existiert
 if (-Not (Test-Path $localBackupDirectory)) {
     New-Item -ItemType Directory -Path $localBackupDirectory -ErrorAction Stop
 }
 
-# Herunterladen des Ordners vom SFTP-Server
 $timestamp = Get-Date -Format "yyyyMMddHHmmss"
 $tempDownloadDir = Join-Path $localBackupDirectory "temp_$timestamp"
 New-Item -ItemType Directory -Path $tempDownloadDir -ErrorAction Stop
@@ -143,7 +132,6 @@ exit
     Handle-Error "Fehler beim Herunterladen des Ordners vom SFTP-Server: $_"
 }
 
-# Zippen des heruntergeladenen Ordners
 try {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $zipFilePath = Join-Path $localBackupDirectory "backup_$timestamp.zip"
@@ -152,14 +140,12 @@ try {
     Handle-Error "Fehler beim Zippen des Verzeichnisses: $_"
 }
 
-# Löschen des temporären Download-Verzeichnisses
 try {
     Remove-Item -Recurse -Force $tempDownloadDir
 } catch {
     Handle-Error "Fehler beim Löschen des temporären Verzeichnisses: $_"
 }
 
-# Sicherstellen, dass maximal $maxBackups Backups existieren
 try {
     $backups = Get-ChildItem -Path $localBackupDirectory -Filter "*.zip" | Sort-Object LastWriteTime
     if ($backups.Count -gt $maxBackups) {
@@ -173,3 +159,5 @@ try {
 }
 Show-Notification -notificationText "backup finished."
 Write-Host "Backup erfolgreich erstellt und veraltete Backups entfernt, falls vorhanden."
+Start-Sleep -Seconds 5
+
